@@ -3,11 +3,15 @@ from typing import List, Dict
 from .ai_service import AIService
 import re
 import string
+import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import math
 
 class PDFProcessor:
     def __init__(self):
         self.ai_service = AIService()
-        print("PDF Processor initialized with AI Service")
+        self.max_workers = max(1, (os.cpu_count() or 2) - 1)  # Leave one core free
+        print(f"PDF Processor initialized with {self.max_workers} workers")
         # Question templates for different types of content
         self.question_templates = {
             'definition': [
@@ -140,16 +144,34 @@ class PDFProcessor:
         
         return concepts
 
-    def generate_basic_questions(self, text: str) -> List[dict]:
-        """Generate questions using AI service"""
-        try:
-            # Use AI service for question generation
-            questions = self.ai_service.generate_questions(text)
-            return questions
-        except Exception as e:
-            print(f"AI question generation failed: {e}")
-            # Fallback to template-based questions if AI fails
-            return self._generate_template_questions(text)
+    def generate_basic_questions(self, text: str, num_questions: int = 5) -> List[dict]:
+        """Generate questions using parallel processing for large texts"""
+        # Split text into chunks of roughly equal size
+        chunk_size = 2000  # characters
+        chunks = [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
+        
+        # Calculate questions per chunk
+        questions_per_chunk = math.ceil(num_questions / len(chunks))
+        
+        # Process chunks in parallel
+        all_questions = []
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            future_to_chunk = {
+                executor.submit(
+                    self.ai_service.generate_questions, 
+                    chunk, 
+                    questions_per_chunk
+                ): i for i, chunk in enumerate(chunks)
+            }
+            
+            for future in as_completed(future_to_chunk):
+                try:
+                    questions = future.result()
+                    all_questions.extend(questions)
+                except Exception as e:
+                    print(f"Error processing chunk: {e}")
+
+        return all_questions[:num_questions]
 
     def assess_difficulty(self, text: str) -> str:
         """Assess the difficulty of a question based on content complexity"""
