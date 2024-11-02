@@ -1,161 +1,149 @@
-import google.generativeai as genai
+from mistralai import Mistral
 from typing import List, Dict
 import re
-import os
-from dotenv import load_dotenv
 
 class AIService:
     def __init__(self):
-        # Load API key from environment variable
-        load_dotenv()
-        api_key = os.getenv('GOOGLE_API_KEY')
-        if not api_key:
-            raise ValueError("Please set GOOGLE_API_KEY environment variable")
-            
-        # Configure the API
-        genai.configure(api_key=api_key)
+        # Initialize Mistral client
+        api_key = "uoqh3XsN9jLVTrC9dtIs8NVsA3bAGOfZ"  # Consider moving this to environment variables
+        self.client = Mistral(api_key=api_key)
+
+    def generate_questions(self, content: str, num_questions: int = 5) -> List[Dict]:
+        """Generate questions using Mistral AI"""
+        system_prompt = """You are an experienced university professor creating exam questions. 
+        Your task is to create high-quality exam questions based on the provided content.
+        Each question should test different levels of understanding and include detailed feedback."""
         
-        # Initialize the model (free version)
-        generation_config = {
-            'temperature': 0.7,
-            'top_p': 0.9,
-            'top_k': 40,
-            'max_output_tokens': 2048,
-        }
-        
-        self.model = genai.GenerativeModel(
-            model_name='gemini-pro',  # Free model
-            generation_config=generation_config
-        )
+        user_prompt = f"""Based on this content, create {num_questions} university-level exam questions:
 
-    def generate_questions(self, text: str, num_questions: int = 5) -> List[Dict]:
-        """Generate questions using Gemini"""
-        prompt = f"""You are an educational assistant. Create {num_questions} study questions from the following text.
+Content:
+{content[:2000]}  # Limit text length to avoid token limits
 
-Text to analyze:
-{text}
+For each question, provide:
+1. The question text (clear and academically rigorous)
+2. Question type (knowledge/application/analysis/evaluation)
+3. What the question tests (specific learning outcomes)
+4. A model answer outline (key points that should be included)
+5. Common mistakes students might make
 
-For each question, use exactly this format:
-Question: (write your question here)
-Context: (include relevant part from the text)
-Type: (choose one: definition/analysis/application)
-Difficulty: (choose one: Easy/Medium/Hard)
-
-Remember:
-1. Each question must follow the exact format above
-2. Make questions clear and focused
-3. Include specific context from the text
-4. Choose an appropriate difficulty level
-"""
+Format each question as a JSON-like structure:
+{{
+    "question": "(question text)",
+    "type": "(question type)",
+    "context": "(what the question tests)",
+    "difficulty": "(easy/medium/hard)"
+}}"""
 
         try:
-            response = self.model.generate_content(prompt)
-            return self._parse_questions(response.text)
+            response = self.client.chat.complete(
+                model="mistral-large-latest",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.7,
+                max_tokens=4096
+            )
+            
+            response_text = response.choices[0].message.content
+            return self._parse_questions(response_text)[:num_questions]
+            
         except Exception as e:
             print(f"Error generating questions: {e}")
             return []
 
     def validate_answer(self, question: str, context: str, student_answer: str) -> Dict:
-        """Validate student's answer using Gemini"""
-        prompt = f"""Evaluate this student's answer:
+        """Validate student's answer using Mistral AI"""
+        prompt = f"""Evaluate this student answer:
 
 Question: {question}
 Context: {context}
-Student's Answer: {student_answer}
+Student Answer: {student_answer}
 
-Provide a clear evaluation in this format:
-1. Score (0-100): [score]
-2. Brief Feedback: [2-3 sentences explaining why]
-3. Strengths: [what they got right]
-4. Areas to Improve: [what they missed]
-5. Quick Tip: [one specific improvement suggestion]
-"""
+Provide evaluation in this format:
+{{
+    "score": (0-100),
+    "feedback": "(brief feedback)",
+    "strengths": ["point1", "point2"],
+    "improvements": ["point1", "point2"],
+    "tip": "(one specific improvement tip)"
+}}"""
 
         try:
-            response = self.model.generate_content(prompt)
-            return self._parse_validation(response.text)
+            response = self.client.chat.complete(
+                model="mistral-large-latest",
+                messages=[
+                    {"role": "system", "content": "You are an experienced professor evaluating student answers."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.3,
+                max_tokens=1000
+            )
+            
+            return self._parse_validation(response.choices[0].message.content)
+            
         except Exception as e:
             print(f"Error validating answer: {e}")
             return {
                 "score": 0,
-                "feedback": "Error processing answer",
+                "feedback": "Error processing response",
                 "strengths": [],
                 "improvements": [],
                 "tip": "Please try again"
             }
 
-    def _parse_questions(self, response: str) -> List[Dict]:
-        """Parse the model's response into structured questions"""
+    def _parse_questions(self, response_text: str) -> List[dict]:
+        """Parse AI response into structured question format"""
         questions = []
-        
-        if not response:
-            print("Empty response from model")
-            return questions
-        
-        print(f"Parsing response: {response[:200]}...")  # Debug log
-        
-        # Split response into individual questions
-        raw_questions = re.split(r'(?:\n|^)Question:', response)
-        
-        for raw_q in raw_questions[1:]:  # Skip first empty split
-            try:
-                print(f"Processing question chunk: {raw_q[:200]}...")  # Debug log
-                
-                # More flexible regex patterns
-                question = re.search(r'^(.*?)(?:\nContext:|\n\n|$)', raw_q, re.DOTALL)
-                context = re.search(r'Context:\s*(.*?)(?:\nType:|\n\n|$)', raw_q, re.DOTALL)
-                q_type = re.search(r'Type:\s*(.*?)(?:\nDifficulty:|\n\n|$)', raw_q, re.DOTALL)
-                difficulty = re.search(r'Difficulty:\s*(.*?)(?:\n\n|$)', raw_q, re.DOTALL)
-                
-                if question:  # As long as we have a question, try to parse
-                    questions.append({
-                        "question": question.group(1).strip(),
-                        "context": context.group(1).strip() if context else "No context provided",
-                        "type": q_type.group(1).strip().lower() if q_type else "definition",
-                        "difficulty": difficulty.group(1).strip() if difficulty else "Medium"
-                    })
-                    print(f"Successfully parsed question: {questions[-1]}")  # Debug log
-                else:
-                    print(f"Failed to parse question from: {raw_q[:200]}...")
+        try:
+            blocks = response_text.split("\n\n")
+            
+            for block in blocks:
+                if not block.strip():
+                    continue
                     
-            except Exception as e:
-                print(f"Error parsing question: {e}")
-                print(f"Raw question text: {raw_q[:200]}...")
-                continue
-        
+                question_match = re.search(r'"question":\s*"([^"]+)"', block)
+                type_match = re.search(r'"type":\s*"([^"]+)"', block)
+                context_match = re.search(r'"context":\s*"([^"]+)"', block)
+                difficulty_match = re.search(r'"difficulty":\s*"([^"]+)"', block)
+                
+                if question_match:
+                    question = {
+                        "question": question_match.group(1).strip(),
+                        "type": type_match.group(1).strip() if type_match else "knowledge",
+                        "context": context_match.group(1).strip() if context_match else "",
+                        "difficulty": difficulty_match.group(1).strip() if difficulty_match else "medium"
+                    }
+                    questions.append(question)
+                    
+        except Exception as e:
+            print(f"Error parsing questions: {e}")
+            
         return questions
 
-    def _parse_validation(self, response: str) -> Dict:
-        """Parse the validation response with improved structure"""
+    def _parse_validation(self, response_text: str) -> Dict:
+        """Parse AI validation response"""
         try:
-            score = re.search(r'Score:\s*(\d+)', response)
-            main_feedback = re.search(r'Main Feedback:(.*?)(?:Key Points|$)', response, re.DOTALL)
-            key_points = re.findall(r'Key Points Covered:(.+?)Missing Elements:', response, re.DOTALL)
-            missing = re.findall(r'Missing Elements:(.+?)Improvement Suggestions:', response, re.DOTALL)
-            suggestions = re.findall(r'Improvement Suggestions:(.+?)Sample Improved Answer:', response, re.DOTALL)
-            sample = re.search(r'Sample Improved Answer:(.+?)$', response, re.DOTALL)
-
-            # Process bullet points into lists
-            def extract_bullets(text):
-                if not text:
-                    return []
-                return [point.strip('• ').strip() for point in text[0].split('\n') if point.strip('• ').strip()]
-
+            score_match = re.search(r'"score":\s*(\d+)', response_text)
+            feedback_match = re.search(r'"feedback":\s*"([^"]+)"', response_text)
+            strengths_match = re.search(r'"strengths":\s*\[(.*?)\]', response_text, re.DOTALL)
+            improvements_match = re.search(r'"improvements":\s*\[(.*?)\]', response_text, re.DOTALL)
+            tip_match = re.search(r'"tip":\s*"([^"]+)"', response_text)
+            
             return {
-                "score": int(score.group(1)) if score else 0,
-                "main_feedback": main_feedback.group(1).strip() if main_feedback else "",
-                "key_points_covered": extract_bullets(key_points),
-                "missing_elements": extract_bullets(missing),
-                "improvement_suggestions": extract_bullets(suggestions),
-                "sample_answer": sample.group(1).strip() if sample else ""
+                "score": int(score_match.group(1)) if score_match else 0,
+                "feedback": feedback_match.group(1) if feedback_match else "No feedback available",
+                "strengths": [s.strip().strip('"') for s in strengths_match.group(1).split(",")] if strengths_match else [],
+                "improvements": [i.strip().strip('"') for i in improvements_match.group(1).split(",")] if improvements_match else [],
+                "tip": tip_match.group(1) if tip_match else "No specific tip available"
             }
+            
         except Exception as e:
             print(f"Error parsing validation: {e}")
             return {
                 "score": 0,
-                "main_feedback": "Error processing answer",
-                "key_points_covered": [],
-                "missing_elements": [],
-                "improvement_suggestions": [],
-                "sample_answer": ""
+                "feedback": "Error processing response",
+                "strengths": [],
+                "improvements": [],
+                "tip": "Please try again"
             }

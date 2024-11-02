@@ -1,42 +1,15 @@
 from PyPDF2 import PdfReader
 from typing import List, Dict
-from .ai_service import AIService
+from mistralai import Mistral
 import re
-import string
 import os
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import math
 
 class PDFProcessor:
     def __init__(self):
-        self.ai_service = AIService()
-        self.max_workers = max(1, (os.cpu_count() or 2) - 1)  # Leave one core free
-        print(f"PDF Processor initialized with {self.max_workers} workers")
-        # Question templates for different types of content
-        self.question_templates = {
-            'definition': [
-                "What is {concept}?",
-                "Define {concept} in your own words:",
-                "Explain the term {concept}:",
-            ],
-            'process': [
-                "Describe the process of {concept}:",
-                "What are the steps involved in {concept}?",
-                "How does {concept} work?",
-            ],
-            'comparison': [
-                "Compare and contrast {concept1} and {concept2}:",
-                "What are the key differences between {concept1} and {concept2}?",
-            ],
-            'example': [
-                "Can you provide an example of {concept}?",
-                "How would you apply {concept} in a real-world situation?",
-            ],
-            'importance': [
-                "Why is {concept} important?",
-                "What is the significance of {concept}?",
-            ]
-        }
+        # Initialize Mistral client
+        api_key = "uoqh3XsN9jLVTrC9dtIs8NVsA3bAGOfZ"  # Consider moving this to environment variables
+        self.client = Mistral(api_key=api_key)
+        self.max_workers = max(1, (os.cpu_count() or 2) - 1)
 
     def extract_text(self, pdf_file) -> str:
         """Extract text from a PDF file"""
@@ -145,72 +118,149 @@ class PDFProcessor:
         return concepts
 
     def generate_basic_questions(self, text: str, num_questions: int = 5) -> List[dict]:
-        """Generate questions using parallel processing for large texts"""
-        # Split text into chunks of roughly equal size
-        chunk_size = 2000  # characters
-        chunks = [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
+        """Generate questions using Mistral AI"""
+        system_prompt = """You are an experienced university professor creating exam questions. 
+        Your task is to create high-quality exam questions based on the provided content.
+        Each question should test different levels of understanding and include detailed feedback."""
         
-        # Calculate questions per chunk
-        questions_per_chunk = math.ceil(num_questions / len(chunks))
-        
-        # Process chunks in parallel
-        all_questions = []
-        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            future_to_chunk = {
-                executor.submit(
-                    self.ai_service.generate_questions, 
-                    chunk, 
-                    questions_per_chunk
-                ): i for i, chunk in enumerate(chunks)
-            }
+        user_prompt = f"""Based on this content, create {num_questions} university-level exam questions:
+
+Content:
+{text[:2000]}  # Limit text length to avoid token limits
+
+For each question, provide:
+1. The question text (clear and academically rigorous)
+2. Question type (knowledge/application/analysis/evaluation)
+3. What the question tests (specific learning outcomes)
+4. A model answer outline (key points that should be included)
+5. Common mistakes students might make
+
+Format each question as a JSON-like structure:
+{{
+    "question": "(question text)",
+    "type": "(question type)",
+    "context": "(what the question tests)",
+    "difficulty": "(easy/medium/hard)"
+}}"""
+
+        try:
+            # Call Mistral API
+            response = self.client.chat.complete(
+                model="mistral-large-latest",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.7,
+                max_tokens=4096
+            )
             
-            for future in as_completed(future_to_chunk):
-                try:
-                    questions = future.result()
-                    all_questions.extend(questions)
-                except Exception as e:
-                    print(f"Error processing chunk: {e}")
+            # Parse response into structured format
+            response_text = response.choices[0].message.content
+            questions = self._parse_mistral_response(response_text)
+            return questions[:num_questions]  # Ensure we return requested number of questions
+            
+        except Exception as e:
+            print(f"Error generating questions with Mistral: {e}")
+            return []
 
-        return all_questions[:num_questions]
-
-    def assess_difficulty(self, text: str) -> str:
-        """Assess the difficulty of a question based on content complexity"""
-        # Count complex terms and structures
-        complex_patterns = [
-            r'\b(?:analyze|evaluate|synthesize|critique)\b',
-            r'\b(?:relationship|correlation|causation)\b',
-            r'\b(?:therefore|however|consequently)\b',
-            r'\([^)]*\)',  # Text in parentheses
-            r'\b(?:theory|principle|law)\b'
-        ]
-        
-        complexity_score = sum(len(re.findall(pattern, text, re.I)) 
-                              for pattern in complex_patterns)
-        
-        # Assess sentence structure complexity
-        words = text.split()
-        avg_word_length = sum(len(word) for word in words) / len(words) if words else 0
-        
-        if complexity_score > 3 or avg_word_length > 7:
-            return "Hard"
-        elif complexity_score > 1 or avg_word_length > 6:
-            return "Medium"
-        else:
-            return "Easy"
+    def _parse_mistral_response(self, response_text: str) -> List[dict]:
+        """Parse Mistral's response into structured question format"""
+        questions = []
+        try:
+            # Split response into question blocks
+            blocks = response_text.split("\n\n")
+            
+            for block in blocks:
+                if not block.strip():
+                    continue
+                    
+                # Extract question components using regex
+                question_match = re.search(r'"question":\s*"([^"]+)"', block)
+                type_match = re.search(r'"type":\s*"([^"]+)"', block)
+                context_match = re.search(r'"context":\s*"([^"]+)"', block)
+                difficulty_match = re.search(r'"difficulty":\s*"([^"]+)"', block)
+                
+                if question_match:
+                    question = {
+                        "question": question_match.group(1).strip(),
+                        "type": type_match.group(1).strip() if type_match else "knowledge",
+                        "context": context_match.group(1).strip() if context_match else "",
+                        "difficulty": difficulty_match.group(1).strip() if difficulty_match else "medium"
+                    }
+                    questions.append(question)
+                    
+        except Exception as e:
+            print(f"Error parsing Mistral response: {e}")
+            
+        return questions
 
     def validate_answer(self, question: str, context: str, student_answer: str) -> Dict:
-        """Validate answer using AI service"""
+        """Validate student's answer using Mistral AI"""
+        prompt = f"""Evaluate this student answer:
+
+Question: {question}
+Context: {context}
+Student Answer: {student_answer}
+
+Provide evaluation in this format:
+{{
+    "score": (0-100),
+    "feedback": "(brief feedback)",
+    "strengths": ["point1", "point2"],
+    "improvements": ["point1", "point2"],
+    "tip": "(one specific improvement tip)"
+}}"""
+
         try:
-            return self.ai_service.validate_answer(question, context, student_answer)
+            response = self.client.chat.complete(
+                model="mistral-large-latest",
+                messages=[
+                    {"role": "system", "content": "You are an experienced professor evaluating student answers."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.3,
+                max_tokens=1000
+            )
+            
+            # Parse response into structured format
+            response_text = response.choices[0].message.content
+            return self._parse_validation_response(response_text)
+            
         except Exception as e:
-            print(f"AI answer validation failed: {e}")
+            print(f"Error validating answer with Mistral: {e}")
             return {
-                "accuracy": 0,
-                "feedback": "Unable to validate answer at this time",
-                "key_points_missed": "",
-                "suggestions": "Please try again later"
+                "score": 0,
+                "feedback": "Error processing response",
+                "strengths": [],
+                "improvements": [],
+                "tip": "Please try again"
             }
 
-    def _generate_template_questions(self, text: str) -> List[dict]:
-        """Fallback method using templates (keep existing template logic)"""
-        # ... (keep existing template-based question generation as fallback) ...
+    def _parse_validation_response(self, response_text: str) -> Dict:
+        """Parse Mistral's validation response"""
+        try:
+            # Extract components using regex
+            score_match = re.search(r'"score":\s*(\d+)', response_text)
+            feedback_match = re.search(r'"feedback":\s*"([^"]+)"', response_text)
+            strengths_match = re.search(r'"strengths":\s*\[(.*?)\]', response_text, re.DOTALL)
+            improvements_match = re.search(r'"improvements":\s*\[(.*?)\]', response_text, re.DOTALL)
+            tip_match = re.search(r'"tip":\s*"([^"]+)"', response_text)
+            
+            return {
+                "score": int(score_match.group(1)) if score_match else 0,
+                "feedback": feedback_match.group(1) if feedback_match else "No feedback available",
+                "strengths": [s.strip().strip('"') for s in strengths_match.group(1).split(",")] if strengths_match else [],
+                "improvements": [i.strip().strip('"') for i in improvements_match.group(1).split(",")] if improvements_match else [],
+                "tip": tip_match.group(1) if tip_match else "No specific tip available"
+            }
+            
+        except Exception as e:
+            print(f"Error parsing validation response: {e}")
+            return {
+                "score": 0,
+                "feedback": "Error processing response",
+                "strengths": [],
+                "improvements": [],
+                "tip": "Please try again"
+            }
