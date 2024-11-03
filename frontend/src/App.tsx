@@ -148,13 +148,16 @@ const App: React.FC = () => {
                             <div className="absolute bottom-0 left-0 w-[500px] h-[500px] bg-sky-500/10 rounded-full blur-3xl" />
                         </div>
 
-                        {/* Header */}
+                        {/* Header - Updated with reload button */}
                         <nav className="glass-card sticky top-0 z-50 mb-8">
                             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
                                 <div className="flex items-center space-x-4">
-                                    <div className="text-2xl font-bold text-gradient">
+                                    <button 
+                                        onClick={() => window.location.reload()}
+                                        className="text-2xl font-bold text-gradient hover:opacity-80 transition-opacity cursor-pointer"
+                                    >
                                         BrainiFi
-                                    </div>
+                                    </button>
                                     <div className="text-sm text-gray-400">
                                         Smart Learning Assistant
                                     </div>
