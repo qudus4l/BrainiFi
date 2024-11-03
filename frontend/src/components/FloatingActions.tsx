@@ -5,16 +5,41 @@ import { FiPlus, FiHelpCircle, FiMoon, FiSun, FiDownload } from 'react-icons/fi'
 interface Props {
     onHelp: () => void;
     onExport?: () => void;
+    children?: React.ReactNode;
 }
 
-export const FloatingActions: React.FC<Props> = ({ onHelp, onExport }) => {
+export const FloatingActions: React.FC<Props> = ({ onHelp, onExport, children }) => {
     const [isOpen, setIsOpen] = useState(false);
     const [isDark, setIsDark] = useState(true);
 
     const toggleTheme = () => {
         setIsDark(!isDark);
-        // Theme implementation to be added
+        setIsOpen(false);
     };
+
+    const handleHelp = () => {
+        onHelp();
+        setIsOpen(false);
+    };
+
+    const handleExport = () => {
+        onExport?.();
+        setIsOpen(false);
+    };
+
+    const wrappedChildren = React.Children.map(children, child => {
+        if (React.isValidElement(child)) {
+            return React.cloneElement(child, {
+                onClick: (e: React.MouseEvent) => {
+                    if (child.props.onClick) {
+                        child.props.onClick(e);
+                    }
+                    setIsOpen(false);
+                }
+            });
+        }
+        return child;
+    });
 
     return (
         <div className="fixed bottom-6 right-6 z-50">
@@ -26,7 +51,7 @@ export const FloatingActions: React.FC<Props> = ({ onHelp, onExport }) => {
                             animate={{ opacity: 1, y: 0 }}
                             exit={{ opacity: 0, y: 20 }}
                             className="glass-button w-12 h-12 flex items-center justify-center"
-                            onClick={onHelp}
+                            onClick={handleHelp}
                         >
                             <FiHelpCircle className="w-5 h-5" />
                         </motion.button>
@@ -51,10 +76,20 @@ export const FloatingActions: React.FC<Props> = ({ onHelp, onExport }) => {
                                 animate={{ opacity: 1, y: 0 }}
                                 exit={{ opacity: 0, y: 20 }}
                                 className="glass-button w-12 h-12 flex items-center justify-center"
-                                onClick={onExport}
+                                onClick={handleExport}
                             >
                                 <FiDownload className="w-5 h-5" />
                             </motion.button>
+                        )}
+
+                        {wrappedChildren && (
+                            <motion.div
+                                initial={{ opacity: 0, y: 20 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                exit={{ opacity: 0, y: 20 }}
+                            >
+                                {wrappedChildren}
+                            </motion.div>
                         )}
                     </div>
                 )}

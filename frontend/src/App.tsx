@@ -4,7 +4,7 @@ import { StudyMode } from '@components/StudyMode';
 import { ProgressTracker } from '@components/ProgressTracker';
 import { Questions, StudyModeType, Question } from '@/types';
 import { uploadPDF } from '@services/api';
-import { FiBook, FiClock, FiEdit3, FiClipboard } from 'react-icons/fi';
+import { FiBook, FiClock, FiEdit3, FiClipboard, FiMessageCircle } from 'react-icons/fi';
 import { SessionProvider } from '@context/SessionContext';
 import { ErrorBoundary } from '@components/ErrorBoundary';
 import { WelcomeView } from '@components/WelcomeView';
@@ -12,11 +12,12 @@ import { StudyView } from '@components/StudyView';
 import { FloatingActions } from '@components/FloatingActions';
 import { HelpOverlay } from '@components/HelpOverlay';
 import { Toast, ToastType } from '@components/Toast';
-import { AnimatePresence } from 'framer-motion';
+import { AnimatePresence, motion } from 'framer-motion';
 import { ThemeProvider } from '@context/ThemeContext';
 import { CustomCursor } from '@components/CustomCursor';
 import { AchievementPopup } from '@components/AchievementPopup';
 import { Footer } from '@components/Footer';
+import { StudyCompanion } from '@components/StudyCompanion';
 
 const App: React.FC = () => {
     const [isLoading, setIsLoading] = useState(false);
@@ -26,6 +27,8 @@ const App: React.FC = () => {
     const [isHelpOpen, setIsHelpOpen] = useState(false);
     const [toast, setToast] = useState<{ message: string; type: ToastType } | null>(null);
     const [achievement, setAchievement] = useState<{ title: string; description: string; type: 'milestone' | 'streak' | 'mastery' } | null>(null);
+    const [showCompanion, setShowCompanion] = useState(false);
+    const [companionMode, setCompanionMode] = useState<'floating' | 'fullpage' | null>(null);
 
     useEffect(() => {
         if (questions) {
@@ -135,6 +138,11 @@ const App: React.FC = () => {
         showToast('Export feature coming soon!', 'info');
     };
 
+    const handleCompanionClose = () => {
+        setCompanionMode(null);
+        // Don't reset any other state - keep questions and currentMode
+    };
+
     return (
         <ErrorBoundary>
             <ThemeProvider>
@@ -166,25 +174,48 @@ const App: React.FC = () => {
                         </nav>
 
                         {/* Main content */}
-                        <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 flex-grow">
-                            {error && (
-                                <div className="mb-6 p-4 glass-card text-red-400 rounded-lg">
-                                    {error}
-                                </div>
-                            )}
-                            
-                            {isLoading ? (
-                                <LoadingState />
-                            ) : !questions ? (
-                                <WelcomeView onUpload={handleFileUpload} isLoading={isLoading} />
-                            ) : (
-                                <StudyView 
-                                    questions={questions}
-                                    currentMode={currentMode}
-                                    onModeChange={setCurrentMode}
-                                />
-                            )}
-                        </main>
+                        {companionMode === 'fullpage' ? (
+                            <StudyCompanion 
+                                mode="fullpage" 
+                                onClose={handleCompanionClose}
+                            />
+                        ) : (
+                            <>
+                                <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 flex-grow">
+                                    {error && (
+                                        <div className="mb-6 p-4 glass-card text-red-400 rounded-lg">
+                                            {error}
+                                        </div>
+                                    )}
+                                    
+                                    {isLoading ? (
+                                        <LoadingState />
+                                    ) : !questions ? (
+                                        <WelcomeView onUpload={handleFileUpload} isLoading={isLoading} />
+                                    ) : (
+                                        <StudyView 
+                                            questions={questions}
+                                            currentMode={currentMode}
+                                            onModeChange={setCurrentMode}
+                                        />
+                                    )}
+                                </main>
+
+                                {companionMode === 'floating' && (
+                                    <motion.div
+                                        initial={{ opacity: 0, y: 20 }}
+                                        animate={{ opacity: 1, y: 0 }}
+                                        exit={{ opacity: 0, y: 20 }}
+                                        className="fixed bottom-20 right-20 w-[400px]"
+                                    >
+                                        <StudyCompanion 
+                                            mode="floating"
+                                            onClose={handleCompanionClose}
+                                        />
+                                    </motion.div>
+                                )}
+                            </>
+                        )}
 
                         <Footer />
 
@@ -192,7 +223,24 @@ const App: React.FC = () => {
                         <FloatingActions 
                             onHelp={() => setIsHelpOpen(true)}
                             onExport={handleExport}
-                        />
+                        >
+                            <div className="space-y-2">
+                                <button
+                                    onClick={() => setCompanionMode('floating')}
+                                    className="glass-button flex items-center w-full"
+                                >
+                                    <FiMessageCircle className="mr-2" />
+                                    Quick Chat
+                                </button>
+                                <button
+                                    onClick={() => setCompanionMode('fullpage')}
+                                    className="glass-button flex items-center w-full"
+                                >
+                                    <FiMessageCircle className="mr-2" />
+                                    Study Companion
+                                </button>
+                            </div>
+                        </FloatingActions>
 
                         {/* Help Overlay */}
                         <HelpOverlay 
